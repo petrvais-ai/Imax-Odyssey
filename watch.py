@@ -1,7 +1,7 @@
 import os
 import hashlib
 import requests
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
 URL = "https://www.cinemacity.cz/films/odyssea/7268s2r"
 STATE_FILE = "state.txt"
@@ -12,14 +12,14 @@ CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 
 def get_page_text() -> str:
     """Render the page with a real browser (content is JS-driven), click
-    the buy-tickets button the same way a visitor would (the booking
-    widget only loads after that click, it's a client-side route change,
-    not a separate page), then grab all visible text, including anything
-    sitting in iframes (the booking widget sometimes lives in a separate
-    embedded frame)."""
+    the buy-tickets button the same way a visitor would, follow it if it
+    opens a new tab (common for multiplex booking systems, which often
+    run on a separate ticketing domain), then grab all visible text,
+    including anything sitting in iframes."""
     with sync_playwright() as p:
         browser = p.chromium.launch()
-        page = browser.new_page()
+        context = browser.new_context()
+        page = context.new_page()
         page.goto(URL, wait_until="networkidle", timeout=45000)
         page.wait_for_timeout(2000)
 
@@ -64,18 +64,29 @@ def get_page_text() -> str:
 
         page.wait_for_timeout(1000)
 
-        # Trigger the booking flow the same way a visitor would
+        # Trigger the booking flow the same way a visitor would, and
+        # watch for a new tab — multiplex booking widgets frequently open
+        # on a separate ticketing domain in a new tab/window.
+        booking_page = page
         try:
-            page.get_by_text("NÁKUP VSTUPENEK", exact=False).first.click(timeout=8000)
-            print("Clicked the buy-tickets button.")
+            with context.expect_page(timeout=8000) as new_page_info:
+                page.get_by_text("NÁKUP VSTUPENEK", exact=False).first.click(timeout=8000)
+            booking_page = new_page_info.value
+            try:
+                booking_page.wait_for_load_state("networkidle", timeout=15000)
+            except PWTimeout:
+                pass
+            print(f"Buy-tickets click opened a new tab: {booking_page.url}")
+        except PWTimeout:
+            print("No new tab opened within 8s — assuming in-page navigation.")
         except Exception as e:
             print(f"Could not click the buy-tickets button: {e}")
 
-        page.wait_for_timeout(5000)  # let the booking widget load/render
+        booking_page.wait_for_timeout(5000)  # let the booking widget load/render
 
-        chunks = [page.inner_text("body")]
-        for frame in page.frames:
-            if frame != page.main_frame:
+        chunks = [booking_page.inner_text("body")]
+        for frame in booking_page.frames:
+            if frame != booking_page.main_frame:
                 try:
                     chunks.append(frame.inner_text("body"))
                 except Exception:
