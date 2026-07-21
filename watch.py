@@ -11,14 +11,35 @@ CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 
 
 def get_page_text() -> str:
-    """Render the page with a real browser (content is JS-driven) and
-    grab all visible text, including anything sitting in iframes
-    (the booking widget sometimes lives in a separate embedded frame)."""
+    """Render the page with a real browser (content is JS-driven), click
+    the buy-tickets button the same way a visitor would (the booking
+    widget only loads after that click, it's a client-side route change,
+    not a separate page), then grab all visible text, including anything
+    sitting in iframes (the booking widget sometimes lives in a separate
+    embedded frame)."""
     with sync_playwright() as p:
         browser = p.chromium.launch()
         page = browser.new_page()
         page.goto(URL, wait_until="networkidle", timeout=45000)
-        page.wait_for_timeout(4000)  # extra buffer for late JS rendering
+        page.wait_for_timeout(2000)
+
+        # Dismiss a cookie-consent banner if it's covering the button
+        for label in ["Souhlasím", "Přijmout vše", "Accept All", "Accept all cookies"]:
+            try:
+                page.get_by_text(label, exact=False).first.click(timeout=3000)
+                page.wait_for_timeout(1000)
+                break
+            except Exception:
+                continue
+
+        # Trigger the booking flow the same way a visitor would
+        try:
+            page.get_by_text("NÁKUP VSTUPENEK", exact=False).first.click(timeout=8000)
+            print("Clicked the buy-tickets button.")
+        except Exception as e:
+            print(f"Could not click the buy-tickets button: {e}")
+
+        page.wait_for_timeout(5000)  # let the booking widget load/render
 
         chunks = [page.inner_text("body")]
         for frame in page.frames:
