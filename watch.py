@@ -32,6 +32,38 @@ def get_page_text() -> str:
             except Exception:
                 continue
 
+        # A "choose your cinema" modal often pops up on first visit and
+        # blocks every click underneath it. Try to select Flora (the only
+        # cinema we care about) directly; if that's not offered, just
+        # close the modal so we can proceed.
+        modal_handled = False
+        try:
+            page.get_by_text("Flora", exact=False).first.click(timeout=4000)
+            print("Selected Flora from the cinema picker.")
+            modal_handled = True
+        except Exception:
+            pass
+
+        if not modal_handled:
+            for attempt_name, attempt in [
+                ("Escape key", lambda: page.keyboard.press("Escape")),
+                ("modal close button", lambda: page.locator(".modal .close").first.click(timeout=3000)),
+                ("backdrop click", lambda: page.locator(".modal-backdrop").first.click(timeout=3000, force=True)),
+            ]:
+                try:
+                    attempt()
+                    page.wait_for_timeout(1000)
+                    print(f"Dismissed the cinema-picker modal via: {attempt_name}")
+                    modal_handled = True
+                    break
+                except Exception:
+                    continue
+
+        if not modal_handled:
+            print("Could not dismiss the cinema-picker modal — the click below will likely fail.")
+
+        page.wait_for_timeout(1000)
+
         # Trigger the booking flow the same way a visitor would
         try:
             page.get_by_text("NÁKUP VSTUPENEK", exact=False).first.click(timeout=8000)
