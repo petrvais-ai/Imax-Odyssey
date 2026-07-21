@@ -1,0 +1,38 @@
+name: Odyssea ticket watcher
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'   # every ~10 minutes (GitHub may delay this a bit at peak times)
+  workflow_dispatch: {}       # lets you trigger a manual run from the Actions tab
+
+permissions:
+  contents: write
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          playwright install --with-deps chromium
+
+      - name: Check the ticket page
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python watch.py
+
+      - name: Save state back to the repo
+        run: |
+          git config user.name "odyssea-watcher-bot"
+          git config user.email "actions@github.com"
+          git add state.txt
+          git diff --quiet --cached || git commit -m "update watched state"
+          git push
